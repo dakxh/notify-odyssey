@@ -435,7 +435,7 @@ def _ntfy_worker(topic, message, headers):
             print(f"  ❌ [Thread] ntfy error: {e}")
         
         if i < 9:
-            time.sleep(60)
+            time.sleep(20)
 
 def send_ntfy_alert(changes, movie_info):
     topic = CONFIG["ntfy_topic"].strip()
