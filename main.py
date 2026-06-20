@@ -417,7 +417,7 @@ def send_ntfy_alert(changes, movie_info):
     message = "\n".join(changes)
 
     headers = {
-        "Title": f"🎬 BMS Alert: {movie_name}",
+        "Title": f"🎬 BMS Alert: {movie_name}".encode('utf-8'),
         "Priority": "urgent",
         "Tags": "ticket,popcorn"
     }
