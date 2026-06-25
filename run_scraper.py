@@ -14,6 +14,9 @@ EVENT_CODE = "ET00452034"
 STATE_FILE = "state.json"
 MAX_RUNTIME_SECONDS = (5 * 3600) + (55 * 60) # 5 hours 55 mins
 
+# Track WARP State natively
+USE_WARP = True
+
 # Cloudflare WARP local proxy
 PROXIES = {
     "http": "socks5://127.0.0.1:40000",
@@ -51,7 +54,6 @@ POST_HEADERS = {
 }
 
 def quiet_git_pull():
-    # Runs git pull silently so it doesn't spam the console
     subprocess.run(["git", "pull", "origin", "main", "--rebase"], capture_output=True, text=True, check=False)
 
 def quiet_git_push():
@@ -103,25 +105,65 @@ def trigger_ntfy(message):
         if i < 2:
             time.sleep(15)
 
+def toggle_warp():
+    """Toggles Cloudflare WARP on/off and updates the proxy state."""
+    global USE_WARP
+    if USE_WARP:
+        print("    -> 🚨 [IP ROTATION] WARP is currently ON. Disconnecting WARP (Switching to Runner IP)...")
+        subprocess.run(["warp-cli", "--accept-tos", "disconnect"], capture_output=True, check=False)
+        USE_WARP = False
+    else:
+        print("    -> 🚨 [IP ROTATION] WARP is currently OFF. Connecting to WARP (Switching to Cloudflare Proxy)...")
+        subprocess.run(["warp-cli", "--accept-tos", "connect"], capture_output=True, check=False)
+        time.sleep(5)  # Wait for the tunnel to establish
+        USE_WARP = True
+
+def make_bms_request(method, url, max_retries=3, **kwargs):
+    """Network wrapper that intercepts 429s, toggles WARP, and retries the request seamlessly."""
+    for attempt in range(1, max_retries + 1):
+        # Dynamically apply proxies only if WARP is ON
+        current_proxies = PROXIES if USE_WARP else None
+        
+        try:
+            if method.upper() == 'GET':
+                resp = cffi_requests.get(url, proxies=current_proxies, impersonate="chrome", timeout=15, **kwargs)
+            else:
+                resp = cffi_requests.post(url, proxies=current_proxies, impersonate="chrome", timeout=15, **kwargs)
+            
+            print(f"    -> Status: {resp.status_code} (Using WARP: {USE_WARP})")
+            
+            # Catch Rate Limits
+            if resp.status_code == 429:
+                print(f"    -> ⚠️ Rate limited (429) on attempt {attempt}/{max_retries}.")
+                if attempt < max_retries:
+                    toggle_warp()
+                    print("    -> Retrying request...")
+                    continue # Retry loop
+                else:
+                    print("    -> ❌ Max retries reached for this request.")
+            
+            return resp
+            
+        except Exception as e:
+            print(f"    -> ⚠️ Network exception on attempt {attempt}: {e}")
+            if attempt < max_retries:
+                time.sleep(3)
+                continue
+    
+    return None
+
 def fetch_sessions():
     sessions = []
     for date_code in DATES:
         print(f"\n[NETWORK] Fetching sessions for Date: {date_code}...")
         url = f"https://in.bookmyshow.com/api/movies-data/seatlayout/v1/primary?eventCode={EVENT_CODE}&dateCode={date_code}&regionCode=HYD&venueCode={VENUE_CODE}"
-        try:
-            resp = cffi_requests.get(
-                url, 
-                headers=GET_HEADERS, 
-                proxies=PROXIES, 
-                impersonate="chrome", 
-                timeout=15
-            )
-            print(f"    -> Response Status: {resp.status_code}")
+        
+        resp = make_bms_request('GET', url, headers=GET_HEADERS)
+        if not resp or resp.status_code != 200:
+            print(f"    -> Failed fetching {date_code}. Skipping...")
+            continue
             
-            if resp.status_code != 200:
-                print(f"    -> Failed fetching {date_code}. Body: {resp.text[:100]}")
-                continue
-                
+        try:
             data = resp.json()
             shows = data.get("data", {}).get("showTimes", [])
             print(f"    -> Found {len(shows)} total shows for this date. Filtering for PCX SCREEN...")
@@ -138,31 +180,25 @@ def fetch_sessions():
             print(f"    -> Filtered {pcx_count} PCX SCREEN sessions for {date_code}.")
             
         except Exception as e:
-            print(f"    -> Error fetching sessions for {date_code}: {e}")
+            print(f"    -> JSON Parse error for {date_code}: {e}")
+            
     return sessions
 
 def fetch_seat_layout(session_id):
     url = "https://services-in.bookmyshow.com/doTrans.aspx"
     payload = f"strParam4=&strParam5=Y&strParam6=&strParam7=N&strParam1={session_id}&strParam2=WEB&strParam3=&strVenueCode={VENUE_CODE}&lngTransactionIdentifier=0&strAppCode=MOBAND2&strFormat=json&strCommand=GETSEATLAYOUT"
-    try:
-        print(f"    -> [POST] {url} (Session: {session_id})")
-        resp = cffi_requests.post(
-            url, 
-            headers=POST_HEADERS, 
-            data=payload, 
-            proxies=PROXIES, 
-            impersonate="chrome", 
-            timeout=15
-        )
-        print(f"    -> Status: {resp.status_code}")
+    
+    print(f"    -> [POST] {url} (Session: {session_id})")
+    resp = make_bms_request('POST', url, headers=POST_HEADERS, data=payload)
+    
+    if not resp or resp.status_code != 200:
+        print(f"    -> Failed layout fetch.")
+        return ""
         
-        if resp.status_code != 200:
-            print(f"    -> Failed layout fetch. Body snippet: {resp.text[:100]}")
-            return ""
-            
+    try:
         return resp.json().get("BookMyShow", {}).get("strData", "")
     except Exception as e:
-        print(f"    -> Exception during layout fetch for {session_id}: {e}")
+        print(f"    -> Exception during JSON parse for layout {session_id}: {e}")
         return ""
 
 def parse_layout(str_data):
@@ -197,7 +233,7 @@ def main():
     print("==================================================")
     print("🚀 STARTING BMS SEAT SCRAPER")
     print("==================================================")
-    print("Fetching valid sessions via Cloudflare WARP proxy + Chrome TLS fingerprint...")
+    print("Fetching valid sessions...")
     target_sessions = fetch_sessions()
     
     total_sessions = len(target_sessions)
