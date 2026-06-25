@@ -1,108 +1,39 @@
-name: BookMyShow Seat Availability Checker
+name: BookMyShow Seat Scraper (Continuous Polling)
 
-# Allows you to trigger this workflow manually from the Actions tab
-on: 
+on:
   workflow_dispatch:
+  # You can uncomment the line below to schedule it automatically (e.g., every 5 hours)
+  # schedule:
+  #   - cron: '0 */5 * * *'
+
+permissions:
+  contents: write # Crucial for pushing state.json back to repo
 
 jobs:
-  check-seats:
+  poll-bms:
     runs-on: ubuntu-latest
+    timeout-minutes: 360 # Ensures GitHub doesn't kill it before our 5h55m timer
     
     steps:
-      - name: Fetch Seat Layout Data (POST Request)
-        # Using curl to send the exact headers and form-urlencoded payload.
-        # --compressed automatically handles the gzip, deflate, br Accept-Encoding.
-        run: |
-          curl -s -X POST 'https://services-in.bookmyshow.com/doTrans.aspx' \
-            -H 'Host: services-in.bookmyshow.com' \
-            -H 'X-Timeout: 10' \
-            -H 'X-Bms-Id: 1.24030869.1782364639801' \
-            -H 'X-Device-Id: 7da7be353fed0515' \
-            -H 'X-Latitude: 17.385044' \
-            -H 'X-Subregion-Code: HYD' \
-            -H 'X-App-Code: MOBAND2' \
-            -H 'User-Agent: Dalvik/2.1.0 (Linux; U; Android 10; Android SDK built for x86_64 Build/QSR1.211112.011)' \
-            -H 'X-Li-Flow: false' \
-            -H 'X-App-Version-Code: 18234' \
-            -H 'X-Location-Selection: manual' \
-            -H 'X-Network: Android | WIFI' \
-            -H 'X-Longitude: 78.48667' \
-            -H 'X-Platform: AND' \
-            -H 'X-Region-Code: HYD' \
-            -H 'X-Region-Slug: hyderabad' \
-            -H 'Lang: en' \
-            -H 'X-Advertiser-Id: f1faf9d2-4db2-4bb7-8e6b-928a56d7a1b8' \
-            -H 'X-Screen-Width: 1440' \
-            -H 'X-Screen-Density: 3.5' \
-            -H 'X-Platform-Code: ANDROID' \
-            -H 'X-Location-Shared: false' \
-            -H 'X-Device-Manufacturer: google' \
-            -H 'X-Segments: false' \
-            -H 'X-Screen-Height: 2872' \
-            -H 'X-Geohash: tep' \
-            -H 'X-App-Version: 18.2.3' \
-            -H 'Content-Type: application/x-www-form-urlencoded' \
-            -H 'Accept-Encoding: gzip, deflate, br' \
-            --compressed \
-            -d 'strParam4=&strParam5=Y&strParam6=&strParam7=N&strParam1=251803&strParam2=WEB&strParam3=&strVenueCode=PRHN&lngTransactionIdentifier=0&strAppCode=MOBAND2&strFormat=json&strCommand=GETSEATLAYOUT' \
-            -o response.json
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Required for proper git rebasing
 
-      - name: Parse and Log Available Seats
-        run: |
-          python3 -c '
-          import json
-          import re
-          import sys
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
           
-          try:
-              with open("response.json", "r") as f:
-                  data = json.load(f)
-              
-              str_data = data.get("BookMyShow", {}).get("strData", "")
-              if not str_data:
-                  print("Error: No strData found.")
-                  sys.exit(1)
-                  
-              # Split the header info from the row layout
-              parts = str_data.split("||")
-              rows_data = parts[1] if len(parts) > 1 else parts[0]
-              rows = rows_data.split("|")
-                  
-              total_available = 0
-              print("==== SEAT AVAILABILITY REPORT ====\n")
-              
-              for row in rows:
-                  if not row or ":" not in row: continue
-                  elements = row.split(":")
-                  
-                  # Format is 1:N:A000:A1011+47...
-                  # elements[0] is sequence, elements[1] is row letter
-                  row_letter = elements[1]
-                  seats = elements[2:]
-                  
-                  available_in_row = []
-                  for seat in seats:
-                      # We look for "A1" (Available)
-                      # Format: A + Status(1) + TypeCode(01) + SeatNumber(...) + +GridPos
-                      # We want to capture the part between the TypeCode and the "+"
-                      # Using a regex to find A1, skip the next 2 digits, capture the rest until "+"
-                      match = re.search(r"A[^2]\d{2}(\d+)\+", seat)
-                      if match:
-                          available_in_row.append(match.group(1))
-                          
-                  count = len(available_in_row)
-                  total_available += count
-                  
-                  if count > 0:
-                      seat_list = ", ".join(available_in_row)
-                      print(f"Row {row_letter}: {count} seats available -> [ {seat_list} ]")
-                  else:
-                      print(f"Row {row_letter}: Completely booked.")
-                      
-              print("\n==================================")
-              print(f"TOTAL AVAILABLE SEATS: {total_available}")
-              
-          except Exception as e:
-              print(f"Fatal error while parsing: {e}")
-              sys.exit(1)
-          '
+      - name: Install Dependencies
+        run: pip install requests
+
+      - name: Configure Git User
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          # Set pull strategy to rebase to handle overlapping runner commits cleanly
+          git config --global pull.rebase true
+
+      - name: Run Polling Script
+        run: python run_scraper.py
