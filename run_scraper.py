@@ -86,6 +86,13 @@ def fetch_sessions():
         url = f"https://in.bookmyshow.com/api/movies-data/seatlayout/v1/primary?eventCode={EVENT_CODE}&dateCode={date_code}&regionCode=HYD&venueCode={VENUE_CODE}"
         try:
             resp = requests.get(url, headers=GET_HEADERS, timeout=10)
+            
+            # Print debugging info if it's not a successful response
+            if resp.status_code != 200:
+                print(f"Failed fetching {date_code}. Status: {resp.status_code}")
+                print(f"Response Body: {resp.text[:200]}") # Prints first 200 chars of the error page
+                continue
+                
             data = resp.json()
             for show in data.get("data", {}).get("showTimes", []):
                 if show.get("attributes") == "PCX SCREEN":
@@ -95,7 +102,8 @@ def fetch_sessions():
                         "time": show["showTime"]
                     })
         except Exception as e:
-            print(f"Error fetching sessions for {date_code}: {e}")
+            print(f"Error parsing sessions for {date_code}: {e}")
+            
     return sessions
 
 def fetch_seat_layout(session_id):
