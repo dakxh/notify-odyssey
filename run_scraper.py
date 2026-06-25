@@ -32,11 +32,7 @@ GET_HEADERS = {
     "User-Agent": "Dalvik/2.1.0 (Linux; U; Android 10; Android SDK built for x86_64 Build/QSR1.211112.011)",
     "X-App-Version": "18.2.3",
     "Accept-Encoding": "gzip, deflate",
-    "Connection": "keep-alive",
-    "X-Bms-Id": "1.24030869.1782364639801",
-    "X-Device-Id": "7da7be353fed0515",
-    "X-Platform": "AND",
-    "X-Platform-Code": "ANDROID"
+    "Connection": "keep-alive"
 }
 
 POST_HEADERS = {
@@ -48,9 +44,7 @@ POST_HEADERS = {
     "User-Agent": "Dalvik/2.1.0 (Linux; U; Android 10; Android SDK built for x86_64 Build/QSR1.211112.011)",
     "X-App-Version": "18.2.3",
     "Content-Type": "application/x-www-form-urlencoded",
-    "Accept-Encoding": "gzip, deflate",
-    "X-Bms-Id": "1.24030869.1782364639801",
-    "X-Device-Id": "7da7be353fed0515"
+    "Accept-Encoding": "gzip, deflate"
 }
 
 def quiet_git_pull():
