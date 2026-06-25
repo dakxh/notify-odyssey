@@ -48,8 +48,6 @@ jobs:
             -o response.json
 
       - name: Parse and Log Available Seats
-        # An inline Python script that loads the JSON, decodes the strData string,
-        # checks for "A1" (Available seat status) and outputs the results nicely.
         run: |
           python3 -c '
           import json
@@ -62,40 +60,42 @@ jobs:
               
               str_data = data.get("BookMyShow", {}).get("strData", "")
               if not str_data:
-                  print("Error: No strData found in the response. The show might be expired or the session is invalid.")
+                  print("Error: No strData found.")
                   sys.exit(1)
                   
-              # Split the header info from the row layout (separated by ||)
+              # Split the header info from the row layout
               parts = str_data.split("||")
-              rows = parts[1].split("|") if len(parts) > 1 else parts[0].split("|")
+              rows_data = parts[1] if len(parts) > 1 else parts[0]
+              rows = rows_data.split("|")
                   
               total_available = 0
-              
               print("==== SEAT AVAILABILITY REPORT ====\n")
               
               for row in rows:
-                  if not row: continue
+                  if not row or ":" not in row: continue
                   elements = row.split(":")
                   
-                  # elements[0] is index, elements[1] is Row Letter
-                  if len(elements) < 3: continue 
-                  
+                  # Format is 1:N:A000:A1011+47...
+                  # elements[0] is sequence, elements[1] is row letter
                   row_letter = elements[1]
                   seats = elements[2:]
                   
-                  available_seats = []
+                  available_in_row = []
                   for seat in seats:
-                      # Status "A1" means available. The regex extracts the seat number before the "+"
-                      # E.g., A10145+2 matches and captures "45"
-                      match = re.match(r"^A1\d{2}([A-Za-z0-9]+)\+", seat)
+                      # We look for "A1" (Available)
+                      # Format: A + Status(1) + TypeCode(01) + SeatNumber(...) + +GridPos
+                      # We want to capture the part between the TypeCode and the "+"
+                      # Using a regex to find A1, skip the next 2 digits, capture the rest until "+"
+                      match = re.search(r"A1\d{2}(\d+)\+", seat)
                       if match:
-                          available_seats.append(match.group(1))
+                          available_in_row.append(match.group(1))
                           
-                  count = len(available_seats)
+                  count = len(available_in_row)
                   total_available += count
                   
                   if count > 0:
-                      print(f"Row {row_letter}: {count} seats available -> [ {', '.join(available_seats)} ]")
+                      seat_list = ", ".join(available_in_row)
+                      print(f"Row {row_letter}: {count} seats available -> [ {seat_list} ]")
                   else:
                       print(f"Row {row_letter}: Completely booked.")
                       
