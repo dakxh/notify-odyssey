@@ -334,7 +334,7 @@ def main():
                 print(f"    -> 🟢 DETECTED UNBLOCKS: +{newly_unblocked_count} new seats!")
                 
                 if not is_first_run:
-                    if newly_unblocked_count >= 6:
+                    if newly_unblocked_count >= 9:
                         rows_str = ", ".join(sorted(unblocked_rows_list))
                         human_date = humanize_date(s_date)
 
