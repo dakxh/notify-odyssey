@@ -8,7 +8,7 @@ import subprocess
 from datetime import datetime
 
 # --- CONFIGURATION ---
-DATES = ["20260718", "20260719"]
+DATES = ["20260719"]
 VENUE_CODE = "PRHN"
 EVENT_CODE = "ET00452034"
 STATE_FILE = "state.json"
