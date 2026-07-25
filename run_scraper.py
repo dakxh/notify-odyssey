@@ -13,7 +13,7 @@ VENUE_CODE = "PRHN"
 EVENT_CODE = "ET00452034"
 STATE_FILE = "state.json"
 MAX_RUNTIME_SECONDS = (5 * 3600) + (55 * 60) # 5 hours 55 mins
-IGNORED_ROWS = ["A", "B", "C", "D"] # Rows that won't count towards the notification threshold
+IGNORED_ROWS = ["A", "B", "C", "D", "E", "F"] # Rows that won't count towards the notification threshold
 
 # Track WARP State natively
 USE_WARP = False
