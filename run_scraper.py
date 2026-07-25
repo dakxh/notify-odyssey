@@ -8,11 +8,12 @@ import subprocess
 from datetime import datetime
 
 # --- CONFIGURATION ---
-DATES = ["20260724","20260725", "20260726"]
+DATES = ["20260725", "20260726"]
 VENUE_CODE = "PRHN"
 EVENT_CODE = "ET00452034"
 STATE_FILE = "state.json"
 MAX_RUNTIME_SECONDS = (5 * 3600) + (55 * 60) # 5 hours 55 mins
+IGNORED_ROWS = ["A", "B", "C", "D"] # Rows that won't count towards the notification threshold
 
 # Track WARP State natively
 USE_WARP = False
@@ -128,7 +129,7 @@ def save_state(deltas, commit_msg="Update seat state"):
     return latest_state
 
 def trigger_ntfy(message):
-    print(f"\n[!] ALERTING VIA NTFY: {message}")
+    print(f"\n[!] ALERTING VIA NTFY: \n{message}\n")
     for i in range(1):
         try:
             resp = requests.post(
@@ -142,6 +143,7 @@ def trigger_ntfy(message):
             print(f"    -> Ntfy ping {i+1} failed: {e}")
 
 def toggle_warp():
+    """Toggles Cloudflare WARP on/off and updates the proxy state."""
     global USE_WARP
     if USE_WARP:
         print("    -> 🚨 [IP ROTATION] WARP is currently ON. Disconnecting WARP (Switching to Runner IP)...")
@@ -150,11 +152,13 @@ def toggle_warp():
     else:
         print("    -> 🚨 [IP ROTATION] WARP is currently OFF. Connecting to WARP (Switching to Cloudflare Proxy)...")
         subprocess.run(["warp-cli", "--accept-tos", "connect"], capture_output=True, check=False)
-        time.sleep(5)
+        time.sleep(5)  # Wait for the tunnel to establish
         USE_WARP = True
 
 def make_bms_request(method, url, max_retries=3, **kwargs):
+    """Network wrapper that intercepts 429s, toggles WARP, and retries the request seamlessly."""
     for attempt in range(1, max_retries + 1):
+        # Dynamically apply proxies only if WARP is ON
         current_proxies = PROXIES if USE_WARP else None
         
         try:
@@ -165,12 +169,13 @@ def make_bms_request(method, url, max_retries=3, **kwargs):
             
             print(f"    -> Status: {resp.status_code} (Using WARP: {USE_WARP})")
             
+            # Catch Rate Limits
             if resp.status_code in [429,403]:
                 print(f"    -> ⚠️ Rate limited (429) on attempt {attempt}/{max_retries}.")
                 if attempt < max_retries:
                     toggle_warp()
                     print("    -> Retrying request...")
-                    continue
+                    continue # Retry loop
                 else:
                     print("    -> ❌ Max retries reached for this request.")
             
@@ -293,7 +298,7 @@ def main():
         print(f"==================================================")
         
         # Pull latest state before starting the cycle
-        state = load_state() 
+        state = load_state()
         deltas = {} # Track ONLY the sessions that change during this cycle
         
         for index, session in enumerate(target_sessions, 1):
@@ -303,7 +308,7 @@ def main():
             
             print(f"\n[{index}/{total_sessions}] Checking Session {s_id} (Date: {s_date} Time: {s_time})")
             print("    -> Sleeping for 30 seconds (Rate Limit Prevention)...")
-            time.sleep(20) 
+            time.sleep(23) 
             
             str_data = fetch_seat_layout(s_id)
             if not str_data:
@@ -320,35 +325,49 @@ def main():
             previous_total = state[s_id].get("total", 0)
             previous_rows = state[s_id].get("rows", {})
             
-            newly_unblocked_count = 0
-            unblocked_rows_list = []
+            total_unblocked_count = 0
+            notifiable_unblocked_count = 0
+            notifiable_unblocked_rows = []
             
             for row, seats in current_seats.items():
                 old_seats_in_row = previous_rows.get(row, [])
                 new_seats = set(seats) - set(old_seats_in_row)
                 
                 if new_seats:
-                    newly_unblocked_count += len(new_seats)
-                    unblocked_rows_list.append(row)
+                    total_unblocked_count += len(new_seats)
+                    
+                    # Only add to notification counts if the row is NOT blocklisted
+                    if row not in IGNORED_ROWS:
+                        notifiable_unblocked_count += len(new_seats)
+                        notifiable_unblocked_rows.append(row)
             
-            if newly_unblocked_count > 0:
-                print(f"    -> 🟢 DETECTED UNBLOCKS: +{newly_unblocked_count} new seats!")
+            if total_unblocked_count > 0:
+                print(f"    -> 🟢 DETECTED UNBLOCKS: +{total_unblocked_count} total new seats!")
                 
-                if not is_first_run:
-                    if newly_unblocked_count >= 9:
-                        rows_str = ", ".join(sorted(unblocked_rows_list))
-                        human_date = humanize_date(s_date)
+                # Verbose logging regarding the blocklist filter
+                if notifiable_unblocked_count > 0:
+                    print(f"    -> 🟢 Notifiable seats (excluding blocklist): +{notifiable_unblocked_count} in rows {', '.join(sorted(notifiable_unblocked_rows))}.")
+                else:
+                    print(f"    -> ⚪ All {total_unblocked_count} unblocked seats were in ignored rows {IGNORED_ROWS}. Notifiable count is 0.")
 
+                if not is_first_run:
+                    # Check threshold solely against the notifiable count
+                    if notifiable_unblocked_count >= 9:
+                        print(f"    -> 🔔 Threshold met ({notifiable_unblocked_count} >= 9). Triggering notification!")
+                        
+                        rows_str = ", ".join(sorted(notifiable_unblocked_rows))
+                        human_date = humanize_date(s_date)
+                        
                         msg = (
-                            f"[{newly_unblocked_count}] ODSY PCX."
-                            f"{rows_str} rows unblocked for #TheOdyssey at Prasads PCX Screen.\n\n"
+                            f"[{notifiable_unblocked_count}] BND PCX. "
+                            f"{rows_str} rows unblocked for #SpiderManBrandNewDay at Prasads PCX Screen.\n\n"
                             f"{human_date}, {s_time}"
                         )
                         trigger_ntfy(msg)
-                    else:
-                        print(f"    -> 🟡 Less than 6 seats unblocked ({newly_unblocked_count}). Skipping notification to avoid spam.")
+                    elif notifiable_unblocked_count > 0:
+                        print(f"    -> 🟡 Notifiable count ({notifiable_unblocked_count}) is less than threshold (9). Skipping notification.")
                 
-                # Update memory & Track Delta
+                # We save EVERYTHING to memory (even blocklisted unblocks) so they aren't marked as "new" next time
                 state[s_id]["rows"] = current_seats
                 state[s_id]["total"] = current_total
                 deltas[s_id] = state[s_id]
